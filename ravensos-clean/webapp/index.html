@@ -68,6 +68,8 @@ label{font-size:12px;color:var(--muted);font-weight:600;letter-spacing:.3px}
 .gcard{display:flex;align-items:center;gap:13px;background:var(--card);border:1px solid var(--line);border-radius:18px;padding:14px;margin-bottom:12px}
 .gcard .meta{flex:1}.gcard .meta b{font-size:15px}.gcard .meta .role{font-size:12px;color:var(--muted)}
 .badge{font-size:10px;font-weight:800;padding:3px 9px;border-radius:20px}.badge.p1{background:rgba(37,99,235,.16);color:#7ea6ff}.badge.p2{background:rgba(139,152,180,.16);color:var(--muted)}
+.grm{margin-left:10px;width:30px;height:30px;flex-shrink:0;border-radius:50%;border:1px solid var(--line-strong);background:transparent;color:var(--muted);font-size:13px;font-weight:700;line-height:1}
+.grm:hover{color:var(--red);border-color:var(--red)}
 /* emergency */
 .etitle{display:flex;align-items:center;gap:9px;color:var(--red);font-weight:900;font-size:15px;letter-spacing:1px}
 .pulse{width:10px;height:10px;border-radius:50%;background:var(--red);animation:pblink 1s infinite;box-shadow:0 0 10px var(--red)}
@@ -260,7 +262,7 @@ function countdown(){
 async function triggerAlert(){
   toast('Sending alert…');
   const pos=await quickFix();
-  const body={lat:pos.lat,lng:pos.lng,accuracyM:pos.acc,address:pos.addr,triggerType:'manual'};
+  const body={lat:pos.lat,lng:pos.lng,accuracyM:pos.acc,address:pos.addr,triggerType:'manual',origin:APP_ORIGIN};
   try{
     const r=await api('/api/alerts',{method:'POST',headers:{'Idempotency-Key':'web-'+Date.now()},body});
     S.alertId=r.alert.id;S.watchToken=r.watchToken;S.startTs=Date.now();
@@ -376,7 +378,8 @@ async function renderGuardians(){
   app.innerHTML='';
   const cards=guardians.map((g,i)=>`<div class="gcard"><div class="av b${(i%5)+1}">${(g.name||'?')[0]}</div>
     <div class="meta"><b>${g.name}</b><div class="role">${g.relationship||'Guardian'}</div></div>
-    <div class="badge ${g.priorityTier===1?'p1':'p2'}">TIER ${g.priorityTier}</div></div>`).join('')
+    <div class="badge ${g.priorityTier===1?'p1':'p2'}">TIER ${g.priorityTier}</div>
+    <button class="grm" onclick="removeGuardian('${g.id}','${(g.name||'').replace(/'/g,"")}')">✕</button></div>`).join('')
     ||'<div style="color:var(--muted);text-align:center;padding:30px">No guardians yet.</div>';
   app.appendChild(el(`<div class="content">
     ${header()}
@@ -400,6 +403,11 @@ async function renderGuardians(){
     ${tabbar('guardians')}
   </div>`));
 }
+window.removeGuardian=async(id,name)=>{
+  if(!confirm('Remove '+(name||'this guardian')+' from your network?'))return;
+  try{await api('/api/guardians/'+id,{method:'DELETE'});toast('Guardian removed');renderGuardians();}
+  catch(e){toast('Failed: '+e.message);}
+};
 window.addGuardian=async()=>{
   const name=document.getElementById('gName').value.trim();const phone=document.getElementById('gPhone').value.trim();
   if(!name||!phone){toast('Name and phone required');return;}
