@@ -4,7 +4,7 @@ services:
   - type: web
     name: raven-sos
     runtime: node
-    rootDir: bravensos-clean/backend
+    rootDir: ravensos-clean/backend
     plan: free
     buildCommand: npm install
     startCommand: npm start
