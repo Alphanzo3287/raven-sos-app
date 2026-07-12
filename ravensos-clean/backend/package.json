@@ -1,0 +1,24 @@
+{
+  "name": "guardian-backend",
+  "version": "0.1.0",
+  "description": "Guardian personal-safety alert backend — core alert loop, fan-out, live streaming",
+  "type": "module",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "demo": "node scripts/demo.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "express": "^4.22.2",
+    "uuid": "^9.0.1",
+    "ws": "^8.21.0",
+    "zod": "^3.25.76"
+  },
+  "optionalDependencies": {
+    "firebase-admin": "^12.0.0",
+    "twilio": "^5.0.0"
+  }
+}

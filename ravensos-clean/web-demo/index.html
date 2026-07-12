@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Guardian — Live Response Console</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<style>
+  :root {
+    --bg: #0b1220;
+    --panel: #111a2e;
+    --panel-2: #16223c;
+    --line: #24314f;
+    --ink: #e8eefc;
+    --muted: #8698c0;
+    --signal: #ffb020;   /* amber: attention */
+    --alarm: #ff4d5e;     /* red: active emergency */
+    --live: #35d0a5;      /* green: connected/safe */
+    --mono: ui-monospace, "JetBrains Mono", "SF Mono", Menlo, monospace;
+    --sans: "Inter", system-ui, -apple-system, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; height: 100vh; overflow: hidden;
+    background: var(--bg); color: var(--ink); font-family: var(--sans);
+    display: grid; grid-template-columns: 360px 1fr; grid-template-rows: 56px 1fr;
+    grid-template-areas: "head head" "side map";
+  }
+  header {
+    grid-area: head; display: flex; align-items: center; justify-content: space-between;
+    padding: 0 20px; border-bottom: 1px solid var(--line); background: var(--panel);
+  }
+  .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; letter-spacing: .3px; }
+  .brand .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--live); box-shadow: 0 0 12px var(--live); }
+  .brand small { color: var(--muted); font-weight: 500; font-family: var(--mono); font-size: 11px; }
+  .mode { display: flex; gap: 6px; align-items: center; font-size: 12px; color: var(--muted); font-family: var(--mono); }
+  .mode button {
+    font-family: var(--mono); font-size: 11px; padding: 5px 10px; border-radius: 6px;
+    border: 1px solid var(--line); background: var(--panel-2); color: var(--muted); cursor: pointer;
+  }
+  .mode button.on { color: var(--bg); background: var(--live); border-color: var(--live); font-weight: 700; }
+
+  aside {
+    grid-area: side; border-right: 1px solid var(--line); background: var(--panel);
+    overflow-y: auto; padding: 16px;
+  }
+  .card { background: var(--panel-2); border: 1px solid var(--line); border-radius: 10px; padding: 14px; margin-bottom: 14px; }
+  .card h2 { margin: 0 0 10px; font-size: 12px; text-transform: uppercase; letter-spacing: 1.4px; color: var(--muted); font-weight: 700; }
+  label { display: block; font-size: 11px; color: var(--muted); margin: 8px 0 4px; font-family: var(--mono); }
+  input, select {
+    width: 100%; padding: 8px 10px; border-radius: 7px; border: 1px solid var(--line);
+    background: #0d1526; color: var(--ink); font-family: var(--mono); font-size: 13px;
+  }
+  .row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  button.action {
+    width: 100%; margin-top: 12px; padding: 11px; border-radius: 8px; border: none; cursor: pointer;
+    font-weight: 700; font-size: 14px; letter-spacing: .3px;
+  }
+  .panic { background: var(--alarm); color: #fff; box-shadow: 0 6px 20px rgba(255,77,94,.35); }
+  .panic:active { transform: translateY(1px); }
+  .ghost { background: transparent; border: 1px solid var(--line); color: var(--ink); }
+  .ghost:hover { border-color: var(--muted); }
+
+  main { grid-area: map; position: relative; }
+  #map { position: absolute; inset: 0; }
+  .status-bar {
+    position: absolute; top: 14px; left: 14px; z-index: 500; display: flex; gap: 10px; align-items: center;
+    background: rgba(11,18,32,.9); border: 1px solid var(--line); border-radius: 10px; padding: 10px 14px;
+    backdrop-filter: blur(8px);
+  }
+  .pill { font-family: var(--mono); font-size: 12px; padding: 4px 10px; border-radius: 20px; font-weight: 700; }
+  .pill.idle { background: #1d2740; color: var(--muted); }
+  .pill.active { background: rgba(255,77,94,.18); color: var(--alarm); animation: pulse 1.3s infinite; }
+  .pill.verifying { background: rgba(255,176,32,.18); color: var(--signal); }
+  .pill.dispatched { background: rgba(53,208,165,.15); color: var(--live); }
+  .pill.resolved { background: rgba(53,208,165,.15); color: var(--live); }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .55; } }
+  .status-bar .who { font-weight: 700; }
+  .status-bar .meta { color: var(--muted); font-family: var(--mono); font-size: 12px; }
+
+  .feed {
+    position: absolute; right: 14px; bottom: 14px; z-index: 500; width: 320px; max-height: 46%;
+    overflow-y: auto; background: rgba(11,18,32,.92); border: 1px solid var(--line); border-radius: 10px;
+    padding: 12px; backdrop-filter: blur(8px); font-family: var(--mono); font-size: 12px;
+  }
+  .feed h3 { margin: 0 0 8px; font-size: 11px; letter-spacing: 1.2px; text-transform: uppercase; color: var(--muted); }
+  .ev { padding: 6px 0; border-bottom: 1px dashed var(--line); color: var(--muted); line-height: 1.5; }
+  .ev:last-child { border-bottom: none; }
+  .ev b { color: var(--ink); }
+  .ev .t { color: var(--signal); }
+  .ev.alarm b { color: var(--alarm); }
+  .ev.live b { color: var(--live); }
+  .leaflet-container { background: #0d1526; }
+  .origin-icon div { width: 18px; height: 18px; border-radius: 50%; background: var(--alarm); border: 3px solid #fff; box-shadow: 0 0 0 6px rgba(255,77,94,.3); }
+  .me-icon div { width: 16px; height: 16px; border-radius: 50%; background: var(--signal); border: 3px solid #0b1220; box-shadow: 0 0 14px var(--signal); }
+</style>
+</head>
+<body>
+<header>
+  <div class="brand"><span class="dot"></span> GUARDIAN <small>response console</small></div>
+  <div class="mode">
+    data source:
+    <button id="modeSim" class="on">SIMULATION</button>
+    <button id="modeLive">LIVE BACKEND</button>
+    <input id="apiBase" value="http://localhost:4000" style="width:180px; display:none" />
+  </div>
+</header>
+
+<aside>
+  <div class="card">
+    <h2>Protected person</h2>
+    <label>Name</label>
+    <input id="pName" value="Aaliyah Carter" />
+    <div class="row">
+      <div><label>Lat</label><input id="pLat" value="34.0195" /></div>
+      <div><label>Lng</label><input id="pLng" value="-118.4912" /></div>
+    </div>
+    <label>Address (reverse-geocoded at trigger)</label>
+    <input id="pAddr" value="1200 Ocean Ave, Santa Monica, CA" />
+  </div>
+
+  <div class="card">
+    <h2>Trigger</h2>
+    <label>Trigger type</label>
+    <select id="pTrigger">
+      <option value="manual">Manual (button held)</option>
+      <option value="hardware">Hardware (key combo)</option>
+      <option value="fob">Bluetooth panic fob</option>
+      <option value="voice">Voice phrase</option>
+      <option value="duress">Duress PIN (silent)</option>
+    </select>
+    <button id="btnPanic" class="action panic">⚠ SEND EMERGENCY ALERT</button>
+    <button id="btnStream" class="action ghost" disabled>▶ Stream movement track</button>
+    <button id="btnResolve" class="action ghost" disabled>✓ Mark safe / resolve</button>
+  </div>
+
+  <div class="card">
+    <h2>Guardian network</h2>
+    <div class="ev"><b>Jasmine</b> · sister · tier 1 · push+sms</div>
+    <div class="ev"><b>Marcus</b> · neighbor · tier 1 · sms</div>
+    <div class="ev"><b>Uncle Ray</b> · uncle · tier 2 · escalation</div>
+  </div>
+</aside>
+
+<main>
+  <div id="map"></div>
+  <div class="status-bar">
+    <span id="pill" class="pill idle">IDLE</span>
+    <span class="who" id="whoLabel">No active alert</span>
+    <span class="meta" id="metaLabel">—</span>
+  </div>
+  <div class="feed">
+    <h3>Live event feed</h3>
+    <div id="feed"></div>
+  </div>
+</main>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+const $ = (id) => document.getElementById(id);
+let MODE = 'sim';
+let state = { token: null, alertId: null, guardians: [], track: [], me: null, origin: null, ws: null };
+
+// ---- map ----
+const map = L.map('map', { zoomControl: true }).setView([34.0195, -118.4912], 16);
+L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+  attribution: '© OpenStreetMap © CARTO', maxZoom: 20,
+}).addTo(map);
+let originMarker, meMarker, trackLine;
+const originIcon = L.divIcon({ className: 'origin-icon', html: '<div></div>', iconSize: [18,18] });
+const meIcon = L.divIcon({ className: 'me-icon', html: '<div></div>', iconSize: [16,16] });
+
+function feed(msg, cls = '') {
+  const t = new Date().toLocaleTimeString();
+  const el = document.createElement('div');
+  el.className = 'ev ' + cls;
+  el.innerHTML = `<span class="t">${t}</span> — ${msg}`;
+  $('feed').prepend(el);
+}
+function setStatus(status, who, meta) {
+  const pill = $('pill');
+  const map = { active: 'ALERT ACTIVE', verifying: 'VERIFYING', dispatched_911: '911 DISPATCHED', resolved: 'RESOLVED', idle: 'IDLE' };
+  const cls = { active: 'active', verifying: 'verifying', dispatched_911: 'dispatched', resolved: 'resolved', idle: 'idle' };
+  pill.className = 'pill ' + (cls[status] || 'idle');
+  pill.textContent = map[status] || status.toUpperCase();
+  if (who) $('whoLabel').textContent = who;
+  if (meta !== undefined) $('metaLabel').textContent = meta;
+}
+
+// ---- mode switch ----
+$('modeSim').onclick = () => { MODE = 'sim'; $('modeSim').classList.add('on'); $('modeLive').classList.remove('on'); $('apiBase').style.display='none'; feed('Switched to <b>simulation</b> mode'); };
+$('modeLive').onclick = () => { MODE = 'live'; $('modeLive').classList.add('on'); $('modeSim').classList.remove('on'); $('apiBase').style.display='inline-block'; feed('Switched to <b>live backend</b> mode — start the backend, then trigger'); };
+
+// ---- live backend helpers ----
+async function api(path, opts = {}) {
+  const base = $('apiBase').value.replace(/\/$/, '');
+  const res = await fetch(base + path, {
+    method: opts.method || 'GET',
+    headers: { 'Content-Type': 'application/json', ...(state.token ? { Authorization: 'Bearer ' + state.token } : {}), ...(opts.headers||{}) },
+    body: opts.body ? JSON.stringify(opts.body) : undefined,
+  });
+  if (!res.ok) throw new Error(path + ' -> ' + res.status);
+  return res.json();
+}
+
+// ---- trigger ----
+$('btnPanic').onclick = async () => {
+  const name = $('pName').value, lat = parseFloat($('pLat').value), lng = parseFloat($('pLng').value), addr = $('pAddr').value;
+  const trig = $('pTrigger').value;
+  state.origin = [lat, lng]; state.me = [lat, lng]; state.track = [[lat, lng]];
+
+  originMarker = L.marker([lat, lng], { icon: originIcon }).addTo(map).bindPopup('Origin: ' + addr);
+  meMarker = L.marker([lat, lng], { icon: meIcon }).addTo(map);
+  trackLine = L.polyline([[lat, lng]], { color: '#ffb020', weight: 3, opacity: .8 }).addTo(map);
+  map.setView([lat, lng], 16);
+
+  const silent = trig === 'duress';
+  setStatus('active', name, addr);
+  feed(`<b>${name}</b> triggered a <b>${trig}</b> alert${silent ? ' (SILENT)' : ''}`, 'alarm');
+
+  if (MODE === 'live') {
+    try {
+      const reg = await api('/api/auth/register', { method: 'POST', body: { displayName: name, phone: '+13105551212' } });
+      state.token = reg.token;
+      state.guardians = [
+        await api('/api/guardians', { method: 'POST', body: { name: 'Jasmine', phone: '+13105550001', priorityTier: 1 } }),
+        await api('/api/guardians', { method: 'POST', body: { name: 'Marcus', phone: '+13105550002', channelPref: 'sms', priorityTier: 1 } }),
+      ];
+      const res = await api('/api/alerts', { method: 'POST', headers: { 'Idempotency-Key': 'web-' + Date.now() }, body: { lat, lng, address: addr, triggerType: trig, isSilent: silent } });
+      state.alertId = res.alert.id;
+      feed(`Backend created alert <b>${state.alertId.slice(0,8)}</b>, notified <b>${res.notifiedTier1}</b> tier-1 guardians`, 'live');
+      feed(`Map link sent: ${res.mapLinks.google.slice(0,42)}…`);
+      connectWs();
+    } catch (e) {
+      feed(`⚠ Could not reach backend (${e.message}). Falling back to simulation.`, 'alarm');
+      MODE = 'sim'; simulateFanout(name);
+    }
+  } else {
+    simulateFanout(name);
+  }
+  $('btnStream').disabled = false; $('btnResolve').disabled = false; $('btnPanic').disabled = true;
+};
+
+function simulateFanout(name) {
+  feed('→ push sent to <b>Jasmine</b> (mock)', 'live');
+  feed('→ sms sent to <b>Jasmine</b> · <b>Marcus</b> (mock)', 'live');
+  setTimeout(() => feed('<b>Jasmine</b> acknowledged — escalation canceled', 'live'), 1400);
+}
+
+function connectWs() {
+  const base = $('apiBase').value.replace(/^http/, 'ws').replace(/\/$/, '');
+  const ws = new WebSocket(`${base}/ws?alertId=${state.alertId}&token=${state.token}`);
+  state.ws = ws;
+  ws.onmessage = (e) => {
+    const m = JSON.parse(e.data);
+    if (m.type === 'ping') drawMove([m.ping.lat, m.ping.lng], true);
+    if (m.type === 'status') { setStatus(m.alert.status); feed(`status → <b>${m.alert.status}</b>`); }
+  };
+  ws.onopen = () => feed('Recipient WebSocket connected — watching live', 'live');
+}
+
+// ---- movement ----
+$('btnStream').onclick = async () => {
+  const [lat0, lng0] = state.origin;
+  const steps = 14;
+  for (let i = 1; i <= steps; i++) {
+    const lat = lat0 + i * 0.0006 + (Math.random()-0.5)*0.0002;
+    const lng = lng0 + i * 0.0007 + (Math.random()-0.5)*0.0002;
+    if (MODE === 'live' && state.alertId) {
+      try { await api(`/api/alerts/${state.alertId}/pings`, { method: 'POST', body: { lat, lng, accuracyM: 6, speedMps: 3 } }); }
+      catch { drawMove([lat, lng], false); }
+    } else {
+      drawMove([lat, lng], false);
+    }
+    await new Promise(r => setTimeout(r, 380));
+  }
+  feed('Movement track streamed — recipient watched in real time', 'live');
+};
+
+function drawMove(pt, fromWs) {
+  state.track.push(pt);
+  state.me = pt;
+  meMarker.setLatLng(pt);
+  trackLine.addLatLng(pt);
+  map.panTo(pt);
+  const n = state.track.length - 1;
+  $('metaLabel').textContent = `${n} live ping${n===1?'':'s'} · last ${pt[0].toFixed(5)}, ${pt[1].toFixed(5)}`;
+  if (n % 4 === 0) feed(`live ping #${n}: ${pt[0].toFixed(5)}, ${pt[1].toFixed(5)}`);
+}
+
+$('btnResolve').onclick = async () => {
+  if (MODE === 'live' && state.alertId) { try { await api(`/api/alerts/${state.alertId}/resolve`, { method: 'POST', body: { resolution: 'responded' } }); } catch {} }
+  setStatus('resolved');
+  feed('Alert <b>resolved</b> — person marked safe', 'live');
+  $('btnStream').disabled = true; $('btnResolve').disabled = true; $('btnPanic').disabled = false;
+};
+
+feed('Console ready. Simulation mode — hit <b>SEND EMERGENCY ALERT</b> to see the loop.');
+</script>
+</body>
+</html>

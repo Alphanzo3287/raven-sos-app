@@ -1,0 +1,23 @@
+name: guardian
+description: Guardian personal-safety app — one-tap emergency alert with live location.
+publish_to: "none"
+version: 0.1.0+1
+
+environment:
+  sdk: ">=3.3.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  http: ^1.2.0                 # API calls
+  geolocator: ^12.0.0          # GPS + streaming
+  web_socket_channel: ^3.0.0   # live status back-channel (optional)
+  shared_preferences: ^2.2.0   # local outbox persistence
+  url_launcher: ^6.2.0         # deep-link into Maps/Waze
+
+# Native config still required (not shown here):
+#  - iOS: Info.plist location + background modes; Back Tap / Action Button Shortcut
+#  - Android: foreground service + FOREGROUND_SERVICE_LOCATION, BOOT_COMPLETED receiver
+
+flutter:
+  uses-material-design: true

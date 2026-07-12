@@ -1,0 +1,20 @@
+# Render Blueprint — deploys the Raven SOS backend (which also serves the web app).
+# In Render: New + → Blueprint → connect your repo → it reads this file.
+services:
+  - type: web
+    name: raven-sos
+    runtime: node
+    rootDir: backend
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      # Optional live providers — add these in the Render dashboard when ready:
+      # - key: TWILIO_ACCOUNT_SID
+      # - key: TWILIO_AUTH_TOKEN
+      # - key: TWILIO_FROM
+      # - key: RAPIDSOS_API_KEY
