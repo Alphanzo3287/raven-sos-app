@@ -1,6 +1,6 @@
 import { config } from '../config.js';
 import { Channel, ChannelPref, NotificationStatus } from '../domain/types.js';
-import { sendSms, sendPush, buildAlertMessage, withRetry } from './notifiers.js';
+import { sendSms, sendPush, sendWebPush, buildAlertMessage, withRetry } from './notifiers.js';
 
 // Fan-out is the heart of the system. When an alert fires we:
 //  1. resolve the tier-1 recipient set,
@@ -46,6 +46,32 @@ async function dispatchOne(store, alert, guardian, channel, message) {
   }
 }
 
+// Send a web push to every device a guardian-user has registered.
+async function dispatchWebPush(store, alert, guardian, message) {
+  const subs = store.listPushSubscriptions(guardian.guardianUserId);
+  if (!subs.length) return [];
+  const payload = {
+    title: '🚨 Raven SOS',
+    body: message.body,
+    url: message.link,
+    alertId: alert.id,
+  };
+  const jobs = subs.map(async (subscription) => {
+    const notif = store.createNotification({
+      alertId: alert.id, recipientId: guardian.id, channel: 'webpush', status: NotificationStatus.QUEUED,
+    });
+    const result = await sendWebPush({ subscription, payload });
+    if (result.gone) store.removePushSubscription(subscription.endpoint);
+    if (result.error) {
+      store.updateNotification(notif.id, { status: NotificationStatus.FAILED });
+      return { channel: 'webpush', guardian: guardian.name, ok: false, error: result.error };
+    }
+    store.updateNotification(notif.id, { status: NotificationStatus.SENT, providerRef: result.providerRef, sentAt: new Date().toISOString() });
+    return { channel: 'webpush', guardian: guardian.name, ok: true, mocked: result.mocked };
+  });
+  return Promise.all(jobs);
+}
+
 /**
  * Fan an alert out to a set of guardians across their preferred channels, all in
  * parallel. Returns the per-attempt results.
@@ -56,9 +82,14 @@ export async function fanOut(store, alert, guardians, message) {
     for (const channel of channelsFor(g.channelPref)) {
       jobs.push(dispatchOne(store, alert, g, channel, message));
     }
+    // Guardians who are Raven SOS users also get a free in-app web push.
+    if (g.guardianUserId) jobs.push(dispatchWebPush(store, alert, g, message).then((r) => r).catch((e) => ({ ok: false, error: String(e) })));
   }
   const settled = await Promise.allSettled(jobs);
-  return settled.map((s) => (s.status === 'fulfilled' ? s.value : { ok: false, error: String(s.reason) }));
+  return settled.flatMap((s) => {
+    if (s.status !== 'fulfilled') return [{ ok: false, error: String(s.reason) }];
+    return Array.isArray(s.value) ? s.value : [s.value];
+  });
 }
 
 /**

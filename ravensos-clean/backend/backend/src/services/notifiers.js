@@ -1,4 +1,4 @@
-import { config, isTwilioConfigured, isFcmConfigured } from '../config.js';
+import { config, isTwilioConfigured, isFcmConfigured, isVapidConfigured } from '../config.js';
 
 // A notifier sends one message over one channel and returns { providerRef }.
 // Real providers activate only when configured; otherwise they log, so the whole
@@ -69,6 +69,32 @@ export async function sendPush({ token, title, body, data }) {
     apns: { headers: { 'apns-priority': '10', 'apns-push-type': 'alert' } },
   });
   return { providerRef: id, mocked: false };
+}
+
+// ---- Web Push (free, in-app; no external account needed beyond VAPID keys) ----
+let webpushLib = null;
+async function getWebPush() {
+  if (webpushLib) return webpushLib;
+  const wp = (await import('web-push')).default;
+  wp.setVapidDetails(config.vapid.subject, config.vapid.publicKey, config.vapid.privateKey);
+  webpushLib = wp;
+  return wp;
+}
+
+export async function sendWebPush({ subscription, payload }) {
+  if (!isVapidConfigured()) {
+    console.log(`[WEBPUSH:mock] -> ${(subscription?.endpoint || '').slice(0, 48)}…  ${JSON.stringify(payload).slice(0, 90)}`);
+    return { providerRef: `mock-webpush-${Date.now()}`, mocked: true };
+  }
+  const wp = await getWebPush();
+  try {
+    await wp.sendNotification(subscription, JSON.stringify(payload), { TTL: 120, urgency: 'high' });
+    return { providerRef: `webpush-${Date.now()}`, mocked: false };
+  } catch (err) {
+    // 404/410 mean the subscription is dead and should be pruned by the caller.
+    const gone = err?.statusCode === 404 || err?.statusCode === 410;
+    return { error: String(err?.message ?? err), gone };
+  }
 }
 
 // Build the human-facing alert copy once, reused across channels.
