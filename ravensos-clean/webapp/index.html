@@ -68,6 +68,12 @@ label{font-size:12px;color:var(--muted);font-weight:600;letter-spacing:.3px}
 .gcard{display:flex;align-items:center;gap:13px;background:var(--card);border:1px solid var(--line);border-radius:18px;padding:14px;margin-bottom:12px}
 .gcard .meta{flex:1}.gcard .meta b{font-size:15px}.gcard .meta .role{font-size:12px;color:var(--muted)}
 .badge{font-size:10px;font-weight:800;padding:3px 9px;border-radius:20px}.badge.p1{background:rgba(37,99,235,.16);color:#7ea6ff}.badge.p2{background:rgba(139,152,180,.16);color:var(--muted)}
+.badge.pend{background:rgba(234,179,8,.18);color:#f5c451}
+.btn.green{background:var(--green);color:#04120a;box-shadow:0 14px 30px -12px rgba(34,197,94,.6)}
+.authtabs{display:flex;background:#0d1526;border:1px solid var(--line);border-radius:14px;padding:4px;gap:4px}
+.atab{flex:1;padding:11px;border:0;border-radius:10px;background:transparent;color:var(--muted);font-weight:700;font-size:14px;cursor:pointer}
+.atab.on{background:var(--blue);color:#fff}
+.btn.areq{width:auto;padding:9px 14px;margin:0;font-size:13px}
 .grm{margin-left:10px;width:30px;height:30px;flex-shrink:0;border-radius:50%;border:1px solid var(--line-strong);background:transparent;color:var(--muted);font-size:13px;font-weight:700;line-height:1}
 .grm:hover{color:var(--red);border-color:var(--red)}
 /* emergency */
@@ -178,28 +184,49 @@ function renderOnboard(){
       <div style="font-size:24px;font-weight:900;letter-spacing:1px">RAVEN <span style="color:var(--red)">SOS</span></div>
       <div style="color:var(--muted);font-size:13px">Protection when seconds matter</div>
     </div>
-    <div class="pad">
-      <label>Your name</label><input id="oName" placeholder="Name"/>
-      <div style="height:12px"></div>
-      <label>Phone number</label><input id="oPhone" placeholder="XXX-XXX-XXXX"/>
-      <div style="height:20px"></div>
-      <button class="btn blue" onclick="doRegister()">Create Profile</button>
-      <div class="note" id="oErr"></div>
-    </div>
+    ${authForm()}
   </div>`));
 }
+let authMode='login';
+function authForm(){
+  const login=authMode==='login';
+  return `<div class="pad">
+    <div class="authtabs">
+      <button class="atab ${login?'on':''}" onclick="setAuthMode('login')">Log in</button>
+      <button class="atab ${!login?'on':''}" onclick="setAuthMode('signup')">Sign up</button>
+    </div>
+    <div style="height:16px"></div>
+    ${login?'':'<label>Your name</label><input id="oName" placeholder="Name"/><div style="height:12px"></div>'}
+    <label>Phone number</label><input id="oPhone" placeholder="XXX-XXX-XXXX" inputmode="tel"/>
+    <div style="height:12px"></div>
+    <label>Password</label><input id="oPass" type="password" placeholder="${login?'Your password':'At least 6 characters'}"/>
+    <div style="height:20px"></div>
+    <button class="btn blue" onclick="${login?'doLogin':'doRegister'}()">${login?'Log in':'Create account'}</button>
+    <div class="note" id="oErr"></div>
+  </div>`;
+}
+window.setAuthMode=(m)=>{authMode=m;renderOnboard();};
+function authErr(m){const e=document.getElementById('oErr');if(e)e.textContent=m;}
 window.doRegister=async()=>{
-  const displayName=document.getElementById('oName').value.trim();
+  const nameEl=document.getElementById('oName');
+  const displayName=nameEl?nameEl.value.trim():'';
   const phone=document.getElementById('oPhone').value.trim();
-  if(!displayName||!phone){document.getElementById('oErr').textContent='Please enter your name and phone.';return;}
+  const password=document.getElementById('oPass').value;
+  if(!displayName||!phone||!password){authErr('Please enter your name, phone, and password.');return;}
+  if(password.length<6){authErr('Password must be at least 6 characters.');return;}
   try{
-    const r=await api('/api/auth/register',{method:'POST',body:{displayName,phone}});
-    S.token=r.token;S.user=r.user;store.set('raven_token',r.token);
-    // seed a couple of demo guardians so the network isn't empty
-    try{await api('/api/guardians',{method:'POST',body:{name:'Mom',phone:'+13105550001',priorityTier:1,relationship:'Mother'}});
-        await api('/api/guardians',{method:'POST',body:{name:'Darius',phone:'+13105550002',priorityTier:1,relationship:'Brother'}});}catch{}
-    render();
-  }catch(e){document.getElementById('oErr').textContent='Couldn\u2019t reach the backend at '+API+'. Start it (cd backend && npm start), then open http://localhost:4000 \u2014 don\u2019t open the file directly. ('+e.message+')';}
+    const r=await api('/api/auth/register',{method:'POST',body:{displayName,phone,password}});
+    S.token=r.token;S.user=r.user;store.set('raven_token',r.token);render();
+  }catch(e){authErr(e.message);}
+};
+window.doLogin=async()=>{
+  const phone=document.getElementById('oPhone').value.trim();
+  const password=document.getElementById('oPass').value;
+  if(!phone||!password){authErr('Enter your phone and password.');return;}
+  try{
+    const r=await api('/api/auth/login',{method:'POST',body:{phone,password}});
+    S.token=r.token;S.user=r.user;store.set('raven_token',r.token);render();
+  }catch(e){authErr(e.message);}
 };
 
 // ================= HOME =================
@@ -374,22 +401,35 @@ function plot(lat,lng){if(!S.map)return;S.marker.setLatLng([lat,lng]);S.track.ad
 
 // ================= GUARDIANS =================
 async function renderGuardians(){
-  let guardians=[];try{guardians=await api('/api/guardians');}catch{}
+  let guardians=[],requests=[];
+  try{guardians=await api('/api/guardians');}catch{}
+  try{const r=await api('/api/requests');requests=r.requests||[];}catch{}
   app.innerHTML='';
-  const cards=guardians.map((g,i)=>`<div class="gcard"><div class="av b${(i%5)+1}">${(g.name||'?')[0]}</div>
-    <div class="meta"><b>${g.name}</b><div class="role">${g.relationship||'Guardian'}</div></div>
-    <div class="badge ${g.priorityTier===1?'p1':'p2'}">TIER ${g.priorityTier}</div>
-    <button class="grm" onclick="removeGuardian('${g.id}','${(g.name||'').replace(/'/g,"")}')">✕</button></div>`).join('')
-    ||'<div style="color:var(--muted);text-align:center;padding:30px">No guardians yet.</div>';
+  const code=(S.user&&S.user.inviteCode)||'—';
+  const reqCards=requests.map(r=>`<div class="gcard">
+    <div class="av b3">${(r.ownerName||'?')[0]}</div>
+    <div class="meta"><b>${r.ownerName}</b><div class="role">wants you as a guardian</div></div>
+    <button class="btn green areq" onclick="respondReq('${r.id}',true)">Accept</button>
+    <button class="grm" onclick="respondReq('${r.id}',false)">✕</button></div>`).join('');
+  const reqSection=requests.length?`<div class="sec-h"><h3 style="font-size:18px;font-weight:800">Requests</h3></div>${reqCards}<div style="height:16px"></div>`:'';
+  const cards=guardians.map((g,i)=>{
+    const pending=g.status==='pending';
+    const badge=pending?`<div class="badge pend">PENDING</div>`:`<div class="badge ${g.priorityTier===1?'p1':'p2'}">TIER ${g.priorityTier}</div>`;
+    return `<div class="gcard"><div class="av b${(i%5)+1}">${(g.name||'?')[0]}</div>
+      <div class="meta"><b>${g.name}</b><div class="role">${pending?'Waiting to accept':(g.relationship||'Guardian')}</div></div>
+      ${badge}
+      <button class="grm" onclick="removeGuardian('${g.id}','${(g.name||'').replace(/'/g,"")}')">✕</button></div>`;
+  }).join('')||'<div style="color:var(--muted);text-align:center;padding:30px">No guardians yet.</div>';
   app.appendChild(el(`<div class="content">
     ${header()}
     <div class="pad">
       <div class="sec-h"><h3 style="font-size:22px;font-weight:800">Guardians</h3></div>
+      ${reqSection}
       ${cards}
       <div class="card" style="margin-top:8px">
         <label>Add a guardian</label>
         <input id="gName" placeholder="Name"/>
-        <input id="gPhone" placeholder="Phone (+1…)"/>
+        <input id="gPhone" placeholder="Phone (+1…) or invite code"/>
         <div style="display:flex;gap:8px;margin-top:8px">
           <input id="gRel" placeholder="Relationship" style="margin:0"/>
           <select id="gTier" style="width:120px;padding:14px;border-radius:14px;background:#0d1526;color:var(--ink);border:1px solid var(--line)">
@@ -397,22 +437,43 @@ async function renderGuardians(){
         </div>
         <div style="height:12px"></div>
         <button class="btn blue" onclick="addGuardian()">Add guardian</button>
+        <div class="note">If they're a Raven SOS user, they'll get a request to accept before they're active.</div>
+      </div>
+      <div class="card" style="margin-top:12px;text-align:center">
+        <label>Your invite code</label>
+        <div style="font-size:26px;font-weight:900;letter-spacing:4px;color:var(--blue);margin-top:4px">${code}</div>
+        <div class="note" style="text-align:center">Share this so others can add you as their guardian.</div>
       </div>
     </div>
     <div style="flex:1"></div>
     ${tabbar('guardians')}
   </div>`));
 }
+window.respondReq=async(id,accept)=>{
+  try{await api('/api/requests/'+id+'/'+(accept?'accept':'decline'),{method:'POST'});
+    toast(accept?'You are now their guardian':'Request declined');renderGuardians();}
+  catch(e){toast('Failed: '+e.message);}
+};
 window.removeGuardian=async(id,name)=>{
   if(!confirm('Remove '+(name||'this guardian')+' from your network?'))return;
   try{await api('/api/guardians/'+id,{method:'DELETE'});toast('Guardian removed');renderGuardians();}
   catch(e){toast('Failed: '+e.message);}
 };
 window.addGuardian=async()=>{
-  const name=document.getElementById('gName').value.trim();const phone=document.getElementById('gPhone').value.trim();
-  if(!name||!phone){toast('Name and phone required');return;}
-  try{await api('/api/guardians',{method:'POST',body:{name,phone,relationship:document.getElementById('gRel').value.trim(),priorityTier:Number(document.getElementById('gTier').value)}});
-    toast('Guardian added');renderGuardians();}catch(e){toast('Failed: '+e.message);}
+  const name=document.getElementById('gName').value.trim();
+  const q=document.getElementById('gPhone').value.trim();
+  const rel=document.getElementById('gRel').value.trim();
+  const tier=Number(document.getElementById('gTier').value);
+  if(!q){toast('Enter a phone number or invite code');return;}
+  let phone=q,foundName=null;
+  try{const f=await api('/api/users/find?q='+encodeURIComponent(q));if(f&&f.user){phone=f.user.phone;foundName=f.user.displayName;}}catch{}
+  const finalName=name||foundName;
+  if(!finalName){toast('Please enter a name');return;}
+  try{
+    const g=await api('/api/guardians',{method:'POST',body:{name:finalName,phone,relationship:rel,priorityTier:tier}});
+    toast(g.status==='pending'?'Request sent — waiting for them to accept':'Guardian added');
+    renderGuardians();
+  }catch(e){toast('Failed: '+e.message);}
 };
 
 // ================= HISTORY =================

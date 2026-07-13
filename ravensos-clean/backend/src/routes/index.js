@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { z } from 'zod';
+import { scryptSync, randomBytes, timingSafeEqual } from 'node:crypto';
 import { authMiddleware } from '../middleware/auth.js';
 import { config } from '../config.js';
 
@@ -10,22 +11,70 @@ const parse = (schema, body) => {
   return r.data;
 };
 
+// Password hashing with Node's built-in scrypt (no dependency).
+function hashPassword(pw) {
+  const salt = randomBytes(16);
+  return salt.toString('hex') + ':' + scryptSync(pw, salt, 64).toString('hex');
+}
+function verifyPassword(pw, stored) {
+  if (!stored || !stored.includes(':')) return false;
+  const [saltHex, hashHex] = stored.split(':');
+  const dk = scryptSync(pw, Buffer.from(saltHex, 'hex'), 64);
+  const target = Buffer.from(hashHex, 'hex');
+  return dk.length === target.length && timingSafeEqual(dk, target);
+}
+
+// Public view of a user — never leak the password hash.
+const publicUser = (u) => u && ({ id: u.id, displayName: u.displayName, phone: u.phone, inviteCode: u.inviteCode });
+
 export function buildRoutes(store, alertService) {
   const router = Router();
   const auth = authMiddleware(store);
 
-  // ---- auth (stubbed OTP) ----
+  // ---- auth (phone + password) ----
   router.post('/auth/register', (req, res) => {
     const data = parse(z.object({
       displayName: z.string().min(1),
       phone: z.string().min(3),
-      email: z.string().email().optional(),
+      password: z.string().min(6),
     }), req.body);
-    const { user, token } = store.createUser(data);
-    res.status(201).json({ token, user });
+    if (store.getUserByPhone(data.phone)) {
+      return res.status(409).json({ error: 'An account with that phone number already exists. Try logging in.' });
+    }
+    const user = store.createUser({ displayName: data.displayName, phone: data.phone, passwordHash: hashPassword(data.password) });
+    const token = store.createSession(user.id);
+    res.status(201).json({ token, user: publicUser(user) });
   });
 
-  router.get('/me', auth, (req, res) => res.json({ user: req.user }));
+  router.post('/auth/login', (req, res) => {
+    const data = parse(z.object({ phone: z.string().min(3), password: z.string().min(1) }), req.body);
+    const user = store.getUserByPhone(data.phone);
+    if (!user || !verifyPassword(data.password, user.passwordHash)) {
+      return res.status(401).json({ error: 'Wrong phone number or password.' });
+    }
+    const token = store.createSession(user.id);
+    res.json({ token, user: publicUser(user) });
+  });
+
+  router.get('/me', auth, (req, res) => res.json({ user: publicUser(req.user) }));
+
+  // Look up another Raven SOS user by phone number or invite code.
+  router.get('/users/find', auth, (req, res) => {
+    const found = store.findUser(req.query.q);
+    if (!found || found.id === req.user.id) return res.status(404).json({ error: 'No Raven SOS user found for that.' });
+    res.json({ user: { id: found.id, displayName: found.displayName, phone: found.phone } });
+  });
+
+  // ---- guardian requests (incoming: people who added ME) ----
+  router.get('/requests', auth, (req, res) => res.json({ requests: store.listIncomingRequests(req.user.id) }));
+  router.post('/requests/:id/accept', auth, (req, res) => {
+    if (!store.respondToRequest(req.user.id, req.params.id, true)) return res.status(404).json({ error: 'not found' });
+    res.json({ accepted: true });
+  });
+  router.post('/requests/:id/decline', auth, (req, res) => {
+    if (!store.respondToRequest(req.user.id, req.params.id, false)) return res.status(404).json({ error: 'not found' });
+    res.json({ declined: true });
+  });
 
   // Public recipient view — open with a share token, no account needed.
   router.get('/watch/:token', (req, res) => {
@@ -53,7 +102,7 @@ export function buildRoutes(store, alertService) {
   });
 
   router.get('/guardians', auth, (req, res) => {
-    res.json(store.listGuardians(req.user.id));
+    res.json(store.listGuardians(req.user.id, { includePending: true }));
   });
 
   router.delete('/guardians/:id', auth, (req, res) => {

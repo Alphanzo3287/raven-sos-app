@@ -46,36 +46,81 @@ export function createStore() {
     },
 
     // ---- users / auth ----
-    createUser({ displayName, phone, email = null, photoUrl = null }) {
+    createUser({ displayName, phone, passwordHash = null, email = null, photoUrl = null }) {
       const id = uuid();
-      const user = { id, displayName, phone, email, photoUrl, createdAt: now() };
+      // Short, human-shareable invite code (unique).
+      let inviteCode;
+      do { inviteCode = Math.random().toString(36).slice(2, 8).toUpperCase(); }
+      while ([...users.values()].some((u) => u.inviteCode === inviteCode));
+      const user = { id, displayName, phone, passwordHash, inviteCode, email, photoUrl, createdAt: now() };
       users.set(id, user);
+      return user;
+    },
+    createSession(userId) {
       const token = uuid();
-      tokens.set(token, id);
-      return { user, token };
+      tokens.set(token, userId);
+      return token;
     },
     getUser(id) { return users.get(id) ?? null; },
     getUserByToken(token) {
       const uid = tokens.get(token);
       return uid ? users.get(uid) ?? null : null;
     },
+    getUserByPhone(phone) {
+      const norm = (p) => (p || '').replace(/[^\d]/g, '');
+      const target = norm(phone);
+      return [...users.values()].find((u) => norm(u.phone) === target) ?? null;
+    },
+    findUser(query) {
+      const q = (query || '').trim();
+      if (!q) return null;
+      const byCode = [...users.values()].find((u) => u.inviteCode === q.toUpperCase());
+      if (byCode) return byCode;
+      return this.getUserByPhone(q);
+    },
 
     // ---- guardians (trusted network) ----
-    addGuardian(ownerId, { name, phone, guardianId = null, channelPref = 'both', priorityTier = 1, relationship = null }) {
+    // If the phone matches a registered user, the guardian link starts as a
+    // 'pending' request that the other person must accept (consent). Otherwise
+    // it's a plain contact and is active immediately.
+    addGuardian(ownerId, { name, phone, channelPref = 'both', priorityTier = 1, relationship = null }) {
+      const match = this.getUserByPhone(phone);
+      const guardianUserId = match && match.id !== ownerId ? match.id : null;
       const id = uuid();
-      const g = { id, ownerId, guardianId, name, phone, channelPref, priorityTier, relationship, status: 'active', createdAt: now() };
+      const g = {
+        id, ownerId, guardianUserId, name, phone, channelPref, priorityTier, relationship,
+        status: guardianUserId ? 'pending' : 'active', createdAt: now(),
+      };
       guardians.set(id, g);
       return g;
     },
-    listGuardians(ownerId, { tier = null } = {}) {
+    listGuardians(ownerId, { tier = null, includePending = false } = {}) {
       return [...guardians.values()].filter(
-        (g) => g.ownerId === ownerId && g.status === 'active' && (tier == null || g.priorityTier === tier)
+        (g) => g.ownerId === ownerId
+          && (includePending || g.status === 'active')
+          && (tier == null || g.priorityTier === tier)
       );
     },
     removeGuardian(ownerId, id) {
       const g = guardians.get(id);
       if (!g || g.ownerId !== ownerId) return false;
       guardians.delete(id);
+      return true;
+    },
+    // Incoming requests: people who added ME as their guardian, still pending.
+    listIncomingRequests(userId) {
+      return [...guardians.values()]
+        .filter((g) => g.guardianUserId === userId && g.status === 'pending')
+        .map((g) => {
+          const owner = users.get(g.ownerId);
+          return { id: g.id, ownerName: owner?.displayName ?? 'Someone', ownerPhone: owner?.phone ?? null, createdAt: g.createdAt };
+        });
+    },
+    respondToRequest(userId, guardianId, accept) {
+      const g = guardians.get(guardianId);
+      if (!g || g.guardianUserId !== userId || g.status !== 'pending') return false;
+      if (accept) g.status = 'active';
+      else guardians.delete(guardianId);
       return true;
     },
 
